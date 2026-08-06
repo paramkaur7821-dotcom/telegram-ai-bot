@@ -10,7 +10,7 @@ async function generateMessage(topic) {
       messages: [
         {
           role: "user",
-          content: `Ek short, engaging Telegram post (max 250 characters) likho iss topic pe: "${topic}". Sirf message text do, kuch aur nahi.`
+          content: `Write a short, engaging Telegram post (max 250 characters) in English about this topic: "${topic}". Only give the message text, nothing else.`
         }
       ],
       max_tokens: 150
