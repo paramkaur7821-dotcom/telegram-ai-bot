@@ -1,4 +1,5 @@
 require('dotenv').config();
+const express = require('express');
 const TelegramBot = require('node-telegram-bot-api').default || require('node-telegram-bot-api');
 const Groq = require('groq-sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -7,6 +8,11 @@ const cron = require('node-cron');
 const getTrendingTopic = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
+
+// ---------- Web server (Render ke liye zaroori) ----------
+const app = express();
+app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(process.env.PORT || 3000, () => console.log('Web server chalu hai'));
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -129,39 +135,39 @@ bot.on('message', async (msg) => {
 
   const lowerText = userText.toLowerCase().trim();
 
-  // Command: interval set karo (jaise "/every 30" ya "har 30 minute")
-  const everyMatch = lowerText.match(/(?:\/every|har)\s*(\d+)\s*(?:minute|min)?/);
-  if (everyMatch) {
-    const minutes = parseInt(everyMatch[1]);
-    if (minutes >= 1 && minutes <= 1440) {
-      startSchedule(minutes);
-      await saveSettings('interval', minutes);
-      await bot.sendMessage(chatId, `Theek hai! Ab har ${minutes} minute mein channel par post hoga.`);
+  try {
+    // Command: interval set karo
+    const everyMatch = lowerText.match(/(?:\/every|har)\s*(\d+)\s*(?:minute|min)?/);
+    if (everyMatch) {
+      const minutes = parseInt(everyMatch[1]);
+      if (minutes >= 1 && minutes <= 1440) {
+        startSchedule(minutes);
+        await saveSettings('interval', minutes);
+        await bot.sendMessage(chatId, `Theek hai! Ab har ${minutes} minute mein channel par post hoga.`);
+        return;
+      }
+    }
+
+    // Command: posting band karo
+    if (lowerText.includes('/stop') || lowerText.includes('posting band')) {
+      stopSchedule();
+      await saveSettings('stopped', 0);
+      await bot.sendMessage(chatId, "Theek hai, automatic posting band kar di hai.");
       return;
     }
-  }
 
-  // Command: posting band karo
-  if (lowerText.includes('/stop') || lowerText.includes('posting band') || lowerText === 'stop posting') {
-    stopSchedule();
-    await saveSettings('stopped', 0);
-    await bot.sendMessage(chatId, "Theek hai, automatic posting band kar di hai.");
-    return;
-  }
-
-  // Command: status check karo
-  if (lowerText.includes('/status') || lowerText.includes('schedule kya hai')) {
-    const settings = await loadSettings();
-    if (settings.mode === 'stopped') {
-      await bot.sendMessage(chatId, "Abhi automatic posting band hai.");
-    } else {
-      await bot.sendMessage(chatId, `Abhi har ${settings.interval_minutes} minute mein post ho raha hai.`);
+    // Command: status check karo
+    if (lowerText.includes('/status') || lowerText.includes('schedule kya hai')) {
+      const settings = await loadSettings();
+      if (settings.mode === 'stopped') {
+        await bot.sendMessage(chatId, "Abhi automatic posting band hai.");
+      } else {
+        await bot.sendMessage(chatId, `Abhi har ${settings.interval_minutes} minute mein post ho raha hai.`);
+      }
+      return;
     }
-    return;
-  }
 
-  // Normal AI chat
-  try {
+    // Normal AI chat
     const history = await getHistory(chatId);
     const conversation = history.map(h => ({
       role: h.role === 'bot' ? 'assistant' : 'user',
