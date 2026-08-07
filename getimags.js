@@ -16,7 +16,6 @@ async function searchPixabay(query) {
     });
     const hits = res.data.hits;
     if (hits && hits.length > 0) {
-      // Random image top results mein se, taaki hamesha same na aaye
       const topHits = hits.slice(0, 8);
       const pick = topHits[Math.floor(Math.random() * topHits.length)];
       if (pick.largeImageURL && pick.largeImageURL.startsWith('http')) {
@@ -30,27 +29,27 @@ async function searchPixabay(query) {
   }
 }
 
-// Topic se simple keywords nikalo (extra words hata ke)
-function extractKeywords(topic) {
-  const words = topic
+function extractKeywords(text) {
+  const stopWords = ['the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'with'];
+  const words = text
     .replace(/[^\w\s]/g, '')
     .split(' ')
-    .filter(w => w.length > 3);
-  return words.slice(0, 3).join(' ') || 'news';
+    .filter(w => w.length > 3 && !stopWords.includes(w.toLowerCase()));
+  return words.slice(0, 3).join(' ') || 'Punjab news';
 }
 
-async function getImage(topic) {
-  const keywords = extractKeywords(topic);
+async function getImage(newsData) {
+  const searchText = `${newsData.title} ${newsData.snippet}`;
+  const keywords = extractKeywords(searchText);
 
-  // Pehle extracted keywords try karo
   let image = await searchPixabay(keywords);
   if (image) return image;
 
-  // Fallback: random generic news category
-  const fallbackTopics = ['news update', 'world news', 'current affairs', 'breaking news'];
-  const fallback = fallbackTopics[Math.floor(Math.random() * fallbackTopics.length)];
-  console.log(`Exact topic ki image nahi mili, "${fallback}" try kar rahe hain...`);
-  image = await searchPixabay(fallback);
+  console.log(`Exact keywords ki image nahi mili, "Punjab India" try kar rahe hain...`);
+  image = await searchPixabay('Punjab India');
+  if (image) return image;
+
+  image = await searchPixabay('news update India');
   return image;
 }
 

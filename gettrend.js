@@ -6,6 +6,7 @@ async function getTrendingTopic() {
     const res = await axios.get('https://serpapi.com/search.json', {
       params: {
         engine: 'google_news',
+        q: 'Punjab',
         gl: 'in',
         hl: 'en',
         api_key: process.env.SERPAPI_KEY
@@ -15,15 +16,18 @@ async function getTrendingTopic() {
 
     const articles = res.data.news_results;
     if (articles && articles.length > 0) {
-      // Random top news se ek chuno (taaki repeat na ho)
       const topArticles = articles.slice(0, 5);
       const pick = topArticles[Math.floor(Math.random() * topArticles.length)];
-      return pick.title;
+      return {
+        title: pick.title,
+        snippet: pick.snippet || pick.title,
+        source: pick.source?.name || ''
+      };
     }
-    return "latest news update";
+    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '' };
   } catch (err) {
     console.error("SerpApi Error:", err.message);
-    return "latest news update";
+    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '' };
   }
 }
 

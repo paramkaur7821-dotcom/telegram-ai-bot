@@ -59,13 +59,13 @@ async function trimHistory(chatId) {
 async function postToChannel() {
   try {
     console.log("Scheduled post shuru ho raha hai...");
-    const topic = await getTrendingTopic();
-    console.log("Topic:", topic);
+    const newsData = await getTrendingTopic();
+    console.log("News:", newsData.title);
 
-    const messageText = await generateMessage(topic);
+    const messageText = await generateMessage(newsData);
     console.log("Message:", messageText);
 
-    const imageUrl = await getImage(topic);
+    const imageUrl = await getImage(newsData);
 
     if (imageUrl) {
       try {
