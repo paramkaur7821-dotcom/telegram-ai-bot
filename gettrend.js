@@ -21,13 +21,14 @@ async function getTrendingTopic() {
       return {
         title: pick.title,
         snippet: pick.snippet || pick.title,
-        source: pick.source?.name || ''
+        source: pick.source?.name || '',
+        thumbnail: pick.thumbnail || null
       };
     }
-    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '' };
+    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '', thumbnail: null };
   } catch (err) {
     console.error("SerpApi Error:", err.message);
-    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '' };
+    return { title: "Punjab latest news", snippet: "Latest updates from Punjab", source: '', thumbnail: null };
   }
 }
 

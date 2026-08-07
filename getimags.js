@@ -39,13 +39,20 @@ function extractKeywords(text) {
 }
 
 async function getImage(newsData) {
+  // Step 1: Asli news article ki image try karo (SerpApi se mili thumbnail)
+  if (newsData.thumbnail && newsData.thumbnail.startsWith('http')) {
+    console.log("Real news image mil gayi (article ki asli photo)!");
+    return newsData.thumbnail;
+  }
+
+  // Step 2: Agar real image na mile, Pixabay se relevant keyword try karo
+  console.log("News ki apni image nahi mili, Pixabay se related image dhoond rahe hain...");
   const searchText = `${newsData.title} ${newsData.snippet}`;
   const keywords = extractKeywords(searchText);
 
   let image = await searchPixabay(keywords);
   if (image) return image;
 
-  console.log(`Exact keywords ki image nahi mili, "Punjab India" try kar rahe hain...`);
   image = await searchPixabay('Punjab India');
   if (image) return image;
 
