@@ -9,14 +9,19 @@ async function searchPixabay(query) {
         q: query,
         image_type: 'photo',
         safesearch: true,
-        per_page: 10,
+        per_page: 15,
         order: 'popular'
       },
       timeout: 8000
     });
     const hits = res.data.hits;
-    if (hits && hits.length > 0 && hits[0].largeImageURL && hits[0].largeImageURL.startsWith('http')) {
-      return hits[0].largeImageURL;
+    if (hits && hits.length > 0) {
+      // Random image top results mein se, taaki hamesha same na aaye
+      const topHits = hits.slice(0, 8);
+      const pick = topHits[Math.floor(Math.random() * topHits.length)];
+      if (pick.largeImageURL && pick.largeImageURL.startsWith('http')) {
+        return pick.largeImageURL;
+      }
     }
     return null;
   } catch (err) {
@@ -25,17 +30,28 @@ async function searchPixabay(query) {
   }
 }
 
+// Topic se simple keywords nikalo (extra words hata ke)
+function extractKeywords(topic) {
+  const words = topic
+    .replace(/[^\w\s]/g, '')
+    .split(' ')
+    .filter(w => w.length > 3);
+  return words.slice(0, 3).join(' ') || 'news';
+}
+
 async function getImage(topic) {
-  // Pehle exact topic try karo
-  let image = await searchPixabay(topic);
+  const keywords = extractKeywords(topic);
+
+  // Pehle extracted keywords try karo
+  let image = await searchPixabay(keywords);
   if (image) return image;
 
-  // Agar na mile, to generic fallback try karo
-  console.log("Exact topic ki image nahi mili, fallback try kar rahe hain...");
-  image = await searchPixabay("news breaking update");
-  if (image) return image;
-
-  return null;
+  // Fallback: random generic news category
+  const fallbackTopics = ['news update', 'world news', 'current affairs', 'breaking news'];
+  const fallback = fallbackTopics[Math.floor(Math.random() * fallbackTopics.length)];
+  console.log(`Exact topic ki image nahi mili, "${fallback}" try kar rahe hain...`);
+  image = await searchPixabay(fallback);
+  return image;
 }
 
 module.exports = getImage;
