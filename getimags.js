@@ -1,6 +1,34 @@
 require('dotenv').config();
 const axios = require('axios');
 
+async function searchGoogleImages(query) {
+  try {
+    const res = await axios.get('https://serpapi.com/search.json', {
+      params: {
+        engine: 'google_images',
+        q: query,
+        gl: 'in',
+        hl: 'en',
+        api_key: process.env.SERPAPI_KEY
+      },
+      timeout: 8000
+    });
+
+    const images = res.data.images_results;
+    if (images && images.length > 0) {
+      const topImages = images.slice(0, 8);
+      const pick = topImages[Math.floor(Math.random() * topImages.length)];
+      if (pick.original && pick.original.startsWith('http')) {
+        return pick.original;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.error(`Google Images Error for "${query}":`, err.message);
+    return null;
+  }
+}
+
 async function searchPixabay(query) {
   try {
     const res = await axios.get('https://pixabay.com/api/', {
@@ -35,28 +63,33 @@ function extractKeywords(text) {
     .replace(/[^\w\s]/g, '')
     .split(' ')
     .filter(w => w.length > 3 && !stopWords.includes(w.toLowerCase()));
-  return words.slice(0, 3).join(' ') || 'Punjab news';
+  return words.slice(0, 4).join(' ') || 'Punjab news';
 }
 
 async function getImage(newsData) {
-  // Step 1: Asli news article ki image try karo (SerpApi se mili thumbnail)
+  // Step 1: Real news article ki apni photo (agar SerpApi ne di ho)
   if (newsData.thumbnail && newsData.thumbnail.startsWith('http')) {
-    console.log("Real news image mil gayi (article ki asli photo)!");
+    console.log("Real news article ki asli photo mil gayi!");
     return newsData.thumbnail;
   }
 
-  // Step 2: Agar real image na mile, Pixabay se relevant keyword try karo
-  console.log("News ki apni image nahi mili, Pixabay se related image dhoond rahe hain...");
+  // Step 2: SerpApi Google Images se, news ke exact keywords se search
   const searchText = `${newsData.title} ${newsData.snippet}`;
   const keywords = extractKeywords(searchText);
+  console.log(`Google Images mein search kar rahe hain: "${keywords}"`);
 
-  let image = await searchPixabay(keywords);
+  let image = await searchGoogleImages(keywords);
+  if (image) {
+    console.log("News se related image Google Images se mil gayi!");
+    return image;
+  }
+
+  // Step 3: Pixabay fallback (agar upar dono fail ho jayein)
+  console.log("Google Images mein nahi mili, Pixabay try kar rahe hain...");
+  image = await searchPixabay(keywords);
   if (image) return image;
 
-  image = await searchPixabay('Punjab India');
-  if (image) return image;
-
-  image = await searchPixabay('news update India');
+  image = await searchPixabay('Punjab India news');
   return image;
 }
 
