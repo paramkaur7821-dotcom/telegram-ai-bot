@@ -23,4 +23,3 @@ Ek AI-powered Telegram bot jo Groq, SerpApi aur Pixabay ka use karke smart repli
 4. `node post.js` (ya jo bhi main file hai) run karo
 <img width="686" height="386" alt="5790794591932977055" src="https://github.com/user-attachments/assets/c78f50e2-5421-4021-aa06-242c47cfb364" />
 
-<img width="686" height="386" alt="5790794591932977055" src="https://github.com/user-attachments/assets/0bd8913c-d643-4137-9a68-033d64cc3b95" />
