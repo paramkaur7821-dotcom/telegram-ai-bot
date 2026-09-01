@@ -9,12 +9,18 @@ const getTrendingTopic = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
 
+const requiredConfig = ['TELEGRAM_BOT_TOKEN', 'GROQ_API_KEY'];
+const missingConfig = requiredConfig.filter((name) => !process.env[name]);
+if (missingConfig.length > 0) {
+  throw new Error(`Missing required environment variables: ${missingConfig.join(', ')}`);
+}
+
 // ---------- Web server (Render ke liye zaroori) ----------
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(process.env.PORT || 3000, () => console.log('Web server chalu hai'));
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -29,10 +35,10 @@ async function getHistory(chatId) {
     .from('chat_history')
     .select('role, message')
     .eq('chat_id', String(chatId))
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(MAX_MESSAGES);
   if (error) { console.error("Supabase fetch error:", error.message); return []; }
-  return data || [];
+  return (data || []).reverse();
 }
 
 async function saveMessage(chatId, role, message) {
@@ -40,19 +46,6 @@ async function saveMessage(chatId, role, message) {
     .from('chat_history')
     .insert([{ chat_id: String(chatId), role, message }]);
   if (error) console.error("Supabase save error:", error.message);
-}
-
-async function trimHistory(chatId) {
-  const { data, error } = await supabase
-    .from('chat_history')
-    .select('id')
-    .eq('chat_id', String(chatId))
-    .order('created_at', { ascending: false });
-  if (error || !data) return;
-  if (data.length > MAX_MESSAGES) {
-    const idsToDelete = data.slice(MAX_MESSAGES).map(row => row.id);
-    await supabase.from('chat_history').delete().in('id', idsToDelete);
-  }
 }
 
 // ---------- Posting function ----------
@@ -187,15 +180,34 @@ bot.on('message', async (msg) => {
 
     await saveMessage(chatId, 'user', userText);
     await saveMessage(chatId, 'bot', reply);
-    await trimHistory(chatId);
   } catch (err) {
     console.error("Error:", err.message);
-    await bot.sendMessage(chatId, "Sorry, kuch error aa gaya, dobara try karo.");
+    await bot.sendMessage(chatId, "Sorry, reply generate nahi ho saka. Thodi der baad dobara try karo.").catch((sendError) => {
+      console.error("Telegram error reply failed:", sendError.message);
+    });
   }
+});
+
+bot.on('polling_error', (error) => {
+  console.error('Telegram polling error:', error.code || '', error.message);
+});
+
+bot.on('error', (error) => {
+  console.error('Telegram bot error:', error.code || '', error.message);
 });
 
 // ---------- Startup: purani settings load karke schedule shuru karo ----------
 (async () => {
+  try {
+    // Long polling cannot receive updates while a webhook remains configured.
+    await bot.deleteWebHook();
+    await bot.startPolling({ restart: true });
+    const botInfo = await bot.getMe();
+    console.log(`Telegram polling started for @${botInfo.username}`);
+  } catch (error) {
+    console.error('Telegram polling startup failed:', error.message);
+  }
+
   const settings = await loadSettings();
   if (settings.mode === 'stopped') {
     console.log("Posting abhi band hai (pichli setting ke hisaab se).");
