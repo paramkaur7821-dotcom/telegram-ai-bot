@@ -11,7 +11,7 @@ Copy `.env.example` to `.env` and set each value. Never commit `.env`.
 
 The chatbot requires a valid `TELEGRAM_BOT_TOKEN` and `GROQ_API_KEY`. If Groq returns `401 Invalid API Key`, generate a new API key in the Groq console, update `GROQ_API_KEY` in the hosting environment and local `.env`, then redeploy/restart the service.
 
-Note: Groq shut down `llama-3.3-70b-versatile` on 2026-08-16. The code now uses `openai/gpt-oss-120b` (Groq's recommended replacement) in both `chatbot.js` and `generatemassags.js`.
+Note: Groq shut down `llama-3.3-70b-versatile` on 2026-08-16. The code now uses `openai/gpt-oss-120b` (Groq's recommended replacement) in both `chatbot.js` and `generatemassags.js`. You can override it with the `GROQ_MODEL` environment variable if needed.
 
 `SUPABASE_URL` and `SUPABASE_KEY` support conversation memory. The `chat_history` table must contain `chat_id`, `role`, `message`, and `created_at` columns.
 
