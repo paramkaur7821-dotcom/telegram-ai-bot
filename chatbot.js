@@ -29,6 +29,16 @@ let currentTask = null;
 
 console.log("Bot chalu ho gaya hai, ab ye messages sun raha hai...");
 
+async function validateGroqKey() {
+  try {
+    await groq.models.list();
+    console.log("Groq API key valid hai.");
+  } catch (error) {
+    console.error(`Groq API check failed: ${error.message}`);
+    console.error("=> Naya GROQ_API_KEY console.groq.com se banao aur .env ke saath hosting secrets mein update karo.");
+  }
+}
+
 // ---------- Chat memory functions ----------
 async function getHistory(chatId) {
   const { data, error } = await supabase
@@ -169,20 +179,29 @@ bot.on('message', async (msg) => {
     conversation.push({ role: 'user', content: userText });
 
     const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "openai/gpt-oss-120b",
       messages: conversation,
       max_tokens: 500
     });
 
-    const reply = completion.choices[0].message.content.trim();
+    const reply = (completion.choices[0]?.message?.content || "").trim();
+    if (!reply) {
+      throw new Error("Groq ne koi content nahi diya");
+    }
     await bot.sendMessage(chatId, reply);
     console.log("Reply bhej diya!");
 
     await saveMessage(chatId, 'user', userText);
     await saveMessage(chatId, 'bot', reply);
-  } catch (err) {
+} catch (err) {
     console.error("Error:", err.message);
-    await bot.sendMessage(chatId, "Sorry, reply generate nahi ho saka. Thodi der baad dobara try karo.").catch((sendError) => {
+    let userMessage = "Sorry, reply generate nahi ho saka. Thodi der baad dobara try karo.";
+    if (err && (err.status === 401 || err.code === 'invalid_api_key')) {
+      userMessage = "Bot ka AI key kharab hai (GROQ_API_KEY invalid). Admin se new key update karne ko kaho.";
+    } else if (err && err.status === 404) {
+      userMessage = "Bot ka AI model available nahi hai. Admin se bot update karne ko kaho.";
+    }
+    await bot.sendMessage(chatId, userMessage).catch((sendError) => {
       console.error("Telegram error reply failed:", sendError.message);
     });
   }
@@ -190,6 +209,18 @@ bot.on('message', async (msg) => {
 
 bot.on('polling_error', (error) => {
   console.error('Telegram polling error:', error.code || '', error.message);
+  if (error.code === 409) {
+    console.warn('409 Conflict detected. Restarting polling in 5s...');
+    bot.stopPolling();
+    setTimeout(async () => {
+      try {
+        await bot.startPolling({ restart: true });
+        console.log('Polling restarted successfully.');
+      } catch (e) {
+        console.error('Retry polling failed:', e.message);
+      }
+    }, 5000);
+  }
 });
 
 bot.on('error', (error) => {
@@ -200,13 +231,15 @@ bot.on('error', (error) => {
 (async () => {
   try {
     // Long polling cannot receive updates while a webhook remains configured.
-    await bot.deleteWebHook();
+    await bot.deleteWebhook({ drop_pending_updates: true });
     await bot.startPolling({ restart: true });
     const botInfo = await bot.getMe();
     console.log(`Telegram polling started for @${botInfo.username}`);
   } catch (error) {
     console.error('Telegram polling startup failed:', error.message);
   }
+
+  await validateGroqKey();
 
   const settings = await loadSettings();
   if (settings.mode === 'stopped') {
