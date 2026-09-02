@@ -24,6 +24,8 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
 const MAX_MESSAGES = 200;
 let currentTask = null;
 
@@ -31,8 +33,13 @@ console.log("Bot chalu ho gaya hai, ab ye messages sun raha hai...");
 
 async function validateGroqKey() {
   try {
-    await groq.models.list();
-    console.log("Groq API key valid hai.");
+    const models = await groq.models.list();
+    const ids = (models.data || []).map(m => m.id);
+    console.log(`Groq API key valid hai. Model use ho raha hai: ${GROQ_MODEL}`);
+    console.log("Available models:", ids.length ? ids.join(', ') : 'koi model nahi mila');
+    if (ids.length > 0 && !ids.includes(GROQ_MODEL)) {
+      console.warn(`=> '${GROQ_MODEL}' aapke access mein nahi hai. Upar di gayi list mein se GROQ_MODEL env variable mein set karo.`);
+    }
   } catch (error) {
     console.error(`Groq API check failed: ${error.message}`);
     console.error("=> Naya GROQ_API_KEY console.groq.com se banao aur .env ke saath hosting secrets mein update karo.");
@@ -179,7 +186,7 @@ bot.on('message', async (msg) => {
     conversation.push({ role: 'user', content: userText });
 
     const completion = await groq.chat.completions.create({
-      model: "openai/gpt-oss-120b",
+      model: GROQ_MODEL,
       messages: conversation,
       max_tokens: 500
     });

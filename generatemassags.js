@@ -3,12 +3,14 @@ const Groq = require('groq-sdk');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
 async function generateMessage(newsData) {
   try {
     const { title, snippet, source } = newsData;
 
     const completion = await groq.chat.completions.create({
-      model: "openai/gpt-oss-120b",
+      model: GROQ_MODEL,
       messages: [
         {
           role: "user",
