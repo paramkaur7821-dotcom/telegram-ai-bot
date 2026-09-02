@@ -88,8 +88,10 @@ async function postToChannel() {
       await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
     }
     console.log("Channel post successful!");
+    return true;
   } catch (err) {
     console.error("Post Error:", err.message);
+    return false;
   }
 }
 
@@ -166,6 +168,39 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // Command: specific time par ek baar post karo (e.g. "9.55 pa post karo")
+    const timePostMatch = lowerText.match(/(\d{1,2})[:.,](\d{2})\s*(am|pm)?/);
+    if (timePostMatch && /post/.test(lowerText)) {
+      let hour = parseInt(timePostMatch[1]);
+      const minute = parseInt(timePostMatch[2]);
+      const meridian = timePostMatch[3];
+      if (meridian === 'pm' && hour !== 12) hour += 12;
+      if (meridian === 'am' && hour === 12) hour = 0;
+      if (hour <= 23 && minute <= 59) {
+        const cronExpr = `${minute} ${hour} * * *`;
+        const oneTimeTask = cron.schedule(cronExpr, () => {
+          console.log(`One-time post at ${hour}:${minute} ho raha hai!`);
+          postToChannel();
+          oneTimeTask.destroy();
+        });
+        console.log(`One-time scheduled: ${hour}:${minute}`);
+        await bot.sendMessage(chatId, `Theek hai! ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} par channel mein post ho jayegi.`);
+        return;
+      }
+    }
+
+    // Command: abhi post karo (e.g. "post karo", "/post", "abi post")
+    const postRequest =
+      lowerText.includes('/post') ||
+      /(post (karo|kar do|kar de|now|abhi|de do)|abi post|abhi post|post chahiye|channel (par|pa) post|post send)/.test(lowerText);
+    if (postRequest) {
+      const ok = await postToChannel();
+      await bot.sendMessage(chatId, ok
+        ? "Theek hai! News abhi channel par post kar di gayi. ✅"
+        : "Post nahi ho saka. Logs dekho (shayad API keys ya quota ka issue hai).");
+      return;
+    }
+
     // Command: status check karo
     if (lowerText.includes('/status') || lowerText.includes('schedule kya hai')) {
       const settings = await loadSettings();
@@ -177,12 +212,28 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // Real-time news context (taaki bot purani/fake news na de)
+    let newsContext = '';
+    if (/(news|khabar|recent|today|update|latest|chal rha|chal raha|kya chal|kya ho raha|whats happening)/i.test(lowerText)) {
+      const topic = await getTrendingTopic();
+      if (topic && topic.title !== 'Punjab latest news') {
+        newsContext = `Aaj ki real news (${new Date().toLocaleString()}):\nTitle: ${topic.title}\nDetails: ${topic.snippet}\nSource: ${topic.source}`;
+        console.log("Chat ke liye real news laayi gayi:", topic.title);
+      }
+    }
+
     // Normal AI chat
     const history = await getHistory(chatId);
     const conversation = history.map(h => ({
       role: h.role === 'bot' ? 'assistant' : 'user',
       content: h.message
     }));
+    if (newsContext) {
+      conversation.push({
+        role: 'system',
+        content: `You are a Punjab news Telegram bot. Upar diye gaye context ki real news ka use karke sahi, sahih tareeke se jawab do. Kabhi bhi news invent/confirmation mat karo jo context mein na ho. \n\n${newsContext}`
+      });
+    }
     conversation.push({ role: 'user', content: userText });
 
     const completion = await groq.chat.completions.create({

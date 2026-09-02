@@ -20,6 +20,15 @@ function decodeXml(str) {
     .replace(/&nbsp;/g, ' ');
 }
 
+function cleanTitle(title, source) {
+  let t = title.trim();
+  if (source) {
+    const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    t = t.replace(new RegExp(`\\s*[-|]\\s*${escaped}\\s*$`, 'i'), '').trim();
+  }
+  return t;
+}
+
 // Free Google News RSS (koi API key nahi chahiye) - SerpApi quota exhaust hone par bhi kaam karta hai
 async function fetchFromGoogleNewsRss() {
   const url = 'https://news.google.com/rss/search?q=Punjab&hl=en-IN&gl=IN&ceid=IN:en';
@@ -32,9 +41,9 @@ async function fetchFromGoogleNewsRss() {
   const posts = [];
   for (const m of items) {
     const content = m[1];
-    const title = decodeXml((content.match(/<title>(.*?)<\/title>/) || [, ''])[1]).trim();
-    if (!title) continue;
     const source = decodeXml((content.match(/<source[^>]*>(.*?)<\/source>/) || [, ''])[1]).trim();
+    const title = cleanTitle(decodeXml((content.match(/<title>(.*?)<\/title>/) || [, ''])[1]), source);
+    if (!title) continue;
     const descHtml = decodeXml((content.match(/<description>(.*?)<\/description>/) || [, ''])[1]);
     const snippet = descHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 250) || title;
     posts.push({ title, snippet, source, thumbnail: null });
