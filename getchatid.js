@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const logError = require('./logerror');
 
 async function getChatId() {
   try {
@@ -7,7 +8,7 @@ async function getChatId() {
     const res = await axios.get(url);
     console.log(JSON.stringify(res.data, null, 2));
   } catch (err) {
-    console.error("Error:", err.message);
+    logError("getUpdates failed:", err);
   }
 }
 

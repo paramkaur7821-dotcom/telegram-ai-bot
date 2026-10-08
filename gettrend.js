@@ -1,10 +1,13 @@
 require('dotenv').config();
 const axios = require('axios');
+const logError = require('./logerror');
 
 const FALLBACK_TOPIC = {
   title: "Punjab latest news",
   snippet: "Latest updates from Punjab",
   source: '',
+  link: '',
+  image: null,
   thumbnail: null
 };
 
@@ -29,6 +32,17 @@ function cleanTitle(title, source) {
   return t;
 }
 
+// RSS item se article ki apni image: media:content -> media:thumbnail -> enclosure
+function findArticleImage(itemXml) {
+  const tags = ['media:content', 'media:thumbnail', 'enclosure'];
+  for (const tag of tags) {
+    const re = new RegExp(`<${tag}\\b[^>]*\\burl=["']([^"']+)["']`, 'i');
+    const match = itemXml.match(re);
+    if (match && /^https?:\/\//i.test(match[1])) return decodeXml(match[1]);
+  }
+  return null;
+}
+
 // Free Google News RSS (koi API key nahi chahiye) - SerpApi quota exhaust hone par bhi kaam karta hai
 async function fetchFromGoogleNewsRss() {
   const url = 'https://news.google.com/rss/search?q=Punjab&hl=en-IN&gl=IN&ceid=IN:en';
@@ -46,13 +60,15 @@ async function fetchFromGoogleNewsRss() {
     if (!title) continue;
     const descHtml = decodeXml((content.match(/<description>(.*?)<\/description>/) || [, ''])[1]);
     const snippet = descHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 250) || title;
-    posts.push({ title, snippet, source, thumbnail: null });
+    const link = decodeXml((content.match(/<link>(.*?)<\/link>/) || [, ''])[1]).trim();
+    const image = findArticleImage(content);
+    posts.push({ title, snippet, source, link, image });
   }
 
   if (posts.length === 0) return null;
   const top = posts.slice(0, 5);
   const pick = top[Math.floor(Math.random() * top.length)];
-  return { title: pick.title, snippet: pick.snippet, source: pick.source, thumbnail: null };
+  return { title: pick.title, snippet: pick.snippet, source: pick.source, link: pick.link, image: pick.image };
 }
 
 // Backup: SerpApi (free plan sirf 100 searches/month de sakta hai)
@@ -77,19 +93,21 @@ async function fetchFromSerpApi() {
         title: pick.title,
         snippet: pick.snippet || pick.title,
         source: pick.source?.name || '',
+        link: pick.link || '',
+        image: pick.thumbnail || null,
         thumbnail: pick.thumbnail || null
       };
     }
     return null;
   } catch (err) {
-    console.error("SerpApi Error:", err.message);
+    logError("SerpApi Error:", err);
     return null;
   }
 }
 
 async function getTrendingTopic() {
   const rssTopic = await fetchFromGoogleNewsRss().catch((err) => {
-    console.error("Google News RSS Error:", err.message);
+    logError("Google News RSS Error:", err);
     return null;
   });
   if (rssTopic) return rssTopic;

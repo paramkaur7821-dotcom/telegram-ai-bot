@@ -1,9 +1,15 @@
 require('dotenv').config();
 const Groq = require('groq-sdk');
+const logError = require('./logerror');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
+function withSource(text, source) {
+  const clean = String(text || '').trim();
+  return source ? `${clean}\n\nSource: ${source}` : clean;
+}
 
 async function generateMessage(newsData) {
   try {
@@ -31,10 +37,10 @@ Requirements:
       ],
       max_tokens: 400
     });
-    return completion.choices[0].message.content.trim();
+    return withSource(completion.choices[0].message.content, source);
   } catch (err) {
-    console.error("Groq Error:", err.message);
-    return `Latest news: ${newsData.title}\n\n${newsData.snippet}`;
+    logError("Groq Error:", err);
+    return withSource(`Latest news: ${newsData.title}\n\n${newsData.snippet}`, newsData.source);
   }
 }
 

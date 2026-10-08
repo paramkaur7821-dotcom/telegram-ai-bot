@@ -1,9 +1,9 @@
 require('dotenv').config();
-const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api').default || require('node-telegram-bot-api');
 const getTrendingTopic = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
+const logError = require('./logerror');
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
@@ -18,14 +18,19 @@ async function run() {
     const imageUrl = await getImage(topic);
 
     if (imageUrl) {
-      await bot.sendPhoto(process.env.TELEGRAM_CHAT_ID, imageUrl, { caption: messageText });
+      try {
+        await bot.sendPhoto(process.env.TELEGRAM_CHAT_ID, imageUrl, { caption: messageText });
+      } catch (imgErr) {
+        logError("Image send failed, sending text only:", imgErr);
+        await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
+      }
     } else {
       await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
     }
 
     console.log("Posted successfully!");
   } catch (err) {
-    console.error("Error:", err.message);
+    logError("Error:", err);
   }
 }
 

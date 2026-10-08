@@ -8,6 +8,7 @@ const cron = require('node-cron');
 const getTrendingTopic = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
+const logError = require('./logerror');
 
 const requiredConfig = ['TELEGRAM_BOT_TOKEN', 'GROQ_API_KEY'];
 const missingConfig = requiredConfig.filter((name) => !process.env[name]);
@@ -41,7 +42,7 @@ async function validateGroqKey() {
       console.warn(`=> '${GROQ_MODEL}' aapke access mein nahi hai. Upar di gayi list mein se GROQ_MODEL env variable mein set karo.`);
     }
   } catch (error) {
-    console.error(`Groq API check failed: ${error.message}`);
+    logError("Groq API check failed:", error);
     console.error("=> Naya GROQ_API_KEY console.groq.com se banao aur .env ke saath hosting secrets mein update karo.");
   }
 }
@@ -81,7 +82,7 @@ async function postToChannel() {
       try {
         await bot.sendPhoto(process.env.TELEGRAM_CHAT_ID, imageUrl, { caption: messageText });
       } catch (imgErr) {
-        console.error("Image send failed, sending text only:", imgErr.message);
+        logError("Image send failed, sending text only:", imgErr);
         await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
       }
     } else {
@@ -90,7 +91,7 @@ async function postToChannel() {
     console.log("Channel post successful!");
     return true;
   } catch (err) {
-    console.error("Post Error:", err.message);
+    logError("Post Error:", err);
     return false;
   }
 }
@@ -252,7 +253,7 @@ bot.on('message', async (msg) => {
     await saveMessage(chatId, 'user', userText);
     await saveMessage(chatId, 'bot', reply);
 } catch (err) {
-    console.error("Error:", err.message);
+    logError("Chat Error:", err);
     let userMessage = "Sorry, reply generate nahi ho saka. Thodi der baad dobara try karo.";
     if (err && (err.status === 401 || err.code === 'invalid_api_key')) {
       userMessage = "Bot ka AI key kharab hai (GROQ_API_KEY invalid). Admin se new key update karne ko kaho.";
@@ -260,7 +261,7 @@ bot.on('message', async (msg) => {
       userMessage = "Bot ka AI model available nahi hai. Admin se bot update karne ko kaho.";
     }
     await bot.sendMessage(chatId, userMessage).catch((sendError) => {
-      console.error("Telegram error reply failed:", sendError.message);
+      logError("Telegram error reply failed:", sendError);
     });
   }
 });
@@ -275,7 +276,7 @@ bot.on('polling_error', (error) => {
         await bot.startPolling({ restart: true });
         console.log('Polling restarted successfully.');
       } catch (e) {
-        console.error('Retry polling failed:', e.message);
+        logError("Retry polling failed:", e);
       }
     }, 5000);
   }
@@ -294,7 +295,7 @@ bot.on('error', (error) => {
     const botInfo = await bot.getMe();
     console.log(`Telegram polling started for @${botInfo.username}`);
   } catch (error) {
-    console.error('Telegram polling startup failed:', error.message);
+    logError("Telegram polling startup failed:", error);
   }
 
   await validateGroqKey();
