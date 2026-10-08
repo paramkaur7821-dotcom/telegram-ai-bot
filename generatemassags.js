@@ -11,6 +11,16 @@ function withSource(text, source) {
   return source ? `${clean}\n\nSource: ${source}` : clean;
 }
 
+const CHANNEL_LANGUAGE = 'English';
+const MAX_COMPLETION_TOKENS = 1500;
+
+function trimToLastSentence(text) {
+  const clean = String(text || '').trim();
+  const end = Math.max(clean.lastIndexOf('.'), clean.lastIndexOf('!'), clean.lastIndexOf('?'));
+  if (end === -1) return clean;
+  return clean.slice(0, end + 1).trim();
+}
+
 async function generateMessage(newsData) {
   try {
     const { title, snippet, source } = newsData;
@@ -19,25 +29,45 @@ async function generateMessage(newsData) {
       model: GROQ_MODEL,
       messages: [
         {
+          role: "system",
+          content: `You write Telegram news posts in ${CHANNEL_LANGUAGE}.
+Use ONLY the facts present in the Title, Details and Source given by the user.
+Never invent or guess names, first names, numbers, dates, quotes, statistics or any other details that are not in the provided text.
+If the information is limited, write a short post of 3 to 5 sentences and say in the post that details are limited or more information is awaited.
+Every post must always end with a complete sentence.
+Reply with only the post text, nothing else.`
+        },
+        {
           role: "user",
-          content: `Write a detailed Telegram news post in English based on this news:
+          content: `Write a Telegram news post in ${CHANNEL_LANGUAGE} based on this news:
 
 Title: ${title}
 Details: ${snippet}
 Source: ${source}
 
 Requirements:
-- Write 4-6 sentences covering full context, background, and what this means
-- Include all relevant information from the details given
-- Use a clear, informative news-reporting tone
+- Use 4-6 sentences covering the full context, unless the details are limited (then use 3-5 sentences and say so)
+- Use only facts present in the Title, Details and Source above
+- Never invent names, first names, numbers, quotes or details
+- Always end with a complete sentence
 - End with 2-3 relevant hashtags
-- Do not add fake facts not present in the given details
 - Only give the message text, nothing else`
         }
       ],
-      max_tokens: 400
+      max_completion_tokens: MAX_COMPLETION_TOKENS,
+      reasoning_effort: 'low'
     });
-    return withSource(completion.choices[0].message.content, source);
+
+    const choice = completion.choices[0];
+    let text = choice?.message?.content || '';
+    if (choice?.finish_reason === 'length') {
+      console.warn("Groq output 'length' se kata, last complete sentence tak trim kar rahe hain.");
+      text = trimToLastSentence(text);
+    }
+    if (!text.trim()) {
+      throw new Error("Groq ne koi post text nahi diya");
+    }
+    return withSource(text, source);
   } catch (err) {
     logError("Groq Error:", err);
     return withSource(`Latest news: ${newsData.title}\n\n${newsData.snippet}`, newsData.source);
