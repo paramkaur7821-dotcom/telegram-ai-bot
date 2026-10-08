@@ -23,11 +23,20 @@ app.listen(process.env.PORT || 3000, () => console.log('Web server chalu hai'));
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Supabase key sirf server-side client ke andar rehti hai, kabhi log/print nahi hoti.
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
+  : null;
+if (!supabase) {
+  console.warn("SUPABASE_URL / SUPABASE_KEY set nahi hai, chat history aur settings DB off rahengi.");
+}
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
-const MAX_MESSAGES = 200;
+const HISTORY_DAYS = 30;
+const HISTORY_LIMIT = 20;
+const HISTORY_RETENTION_MS = HISTORY_DAYS * 24 * 60 * 60 * 1000;
 let currentTask = null;
 
 console.log("Bot chalu ho gaya hai, ab ye messages sun raha hai...");
@@ -49,22 +58,60 @@ async function validateGroqKey() {
 
 // ---------- Chat memory functions ----------
 async function getHistory(chatId) {
-  const { data, error } = await supabase
-    .from('chat_history')
-    .select('role, message')
-    .eq('chat_id', String(chatId))
-    .order('created_at', { ascending: false })
-    .limit(MAX_MESSAGES);
-  if (error) { console.error("Supabase fetch error:", error.message); return []; }
-  return (data || []).reverse();
+  if (!supabase) return [];
+  try {
+    const since = new Date(Date.now() - HISTORY_RETENTION_MS).toISOString();
+    const { data, error } = await supabase
+      .from('chat_history')
+      .select('role, message')
+      .eq('chat_id', String(chatId))
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_LIMIT);
+    if (error) {
+      logError("Supabase history fetch failed:", error);
+      return [];
+    }
+    return (data || []).reverse();
+  } catch (err) {
+    logError("Supabase history fetch failed:", err);
+    return [];
+  }
 }
 
 async function saveMessage(chatId, role, message) {
-  const { error } = await supabase
-    .from('chat_history')
-    .insert([{ chat_id: String(chatId), role, message }]);
-  if (error) console.error("Supabase save error:", error.message);
+  if (!supabase) return;
+  try {
+    const { error } = await supabase
+      .from('chat_history')
+      .insert([{ chat_id: String(chatId), role, message }]);
+    if (error) logError("Supabase save failed:", error);
+  } catch (err) {
+    logError("Supabase save failed:", err);
+  }
 }
+
+// ---------- Daily cleanup: 30 din se purani history delete karo ----------
+async function cleanupOldHistory() {
+  if (!supabase) return;
+  try {
+    const cutoff = new Date(Date.now() - HISTORY_RETENTION_MS).toISOString();
+    const { error } = await supabase
+      .from('chat_history')
+      .delete()
+      .lt('created_at', cutoff);
+    if (error) {
+      logError("Supabase history cleanup failed:", error);
+      return;
+    }
+    console.log(`History cleanup chal gaya: ${HISTORY_DAYS} din se purani rows delete kar di gayi.`);
+  } catch (err) {
+    logError("Supabase history cleanup failed:", err);
+  }
+}
+
+cron.schedule('0 0 * * *', cleanupOldHistory);
+console.log(`Daily history cleanup scheduled: har din 00:00 par ${HISTORY_DAYS} din se purani rows delete hongi.`);
 
 // ---------- Posting function ----------
 async function postToChannel() {
@@ -98,24 +145,35 @@ async function postToChannel() {
 
 // ---------- Settings load/save ----------
 async function loadSettings() {
-  const { data, error } = await supabase
-    .from('bot_settings')
-    .select('*')
-    .eq('id', 1)
-    .single();
-  if (error || !data) {
-    console.log("Settings nahi mile, default use kar rahe hain (20 min)");
+  if (!supabase) return { mode: 'interval', interval_minutes: 20 };
+  try {
+    const { data, error } = await supabase
+      .from('bot_settings')
+      .select('*')
+      .eq('id', 1)
+      .single();
+    if (error || !data) {
+      console.log("Settings nahi mile, default use kar rahe hain (20 min)");
+      return { mode: 'interval', interval_minutes: 20 };
+    }
+    return data;
+  } catch (err) {
+    logError("Settings load failed:", err);
     return { mode: 'interval', interval_minutes: 20 };
   }
-  return data;
 }
 
 async function saveSettings(mode, intervalMinutes) {
-  const { error } = await supabase
-    .from('bot_settings')
-    .update({ mode, interval_minutes: intervalMinutes })
-    .eq('id', 1);
-  if (error) console.error("Settings save error:", error.message);
+  if (!supabase) return;
+  try {
+    const { error } = await supabase
+      .from('bot_settings')
+      .update({ mode, interval_minutes: intervalMinutes })
+      .eq('id', 1);
+    if (error) logError("Settings save failed:", error);
+  } catch (err) {
+    logError("Settings save failed:", err);
+  }
 }
 
 function startSchedule(intervalMinutes) {
