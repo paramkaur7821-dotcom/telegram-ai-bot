@@ -9,6 +9,7 @@ const getTrendingTopic = require('./gettrend');
 const { getTrendingTopics } = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
+const { resolvePublisherUrl, fetchArticleText } = require('./article');
 const logError = require('./logerror');
 
 const requiredConfig = ['TELEGRAM_BOT_TOKEN', 'GROQ_API_KEY'];
@@ -216,13 +217,63 @@ async function recordPostedNews(story, imageUrl) {
   }
 }
 
+// ---------- Posting helpers ----------
+const TELEGRAM_TEXT_LIMIT = 4096;
+const TELEGRAM_CAPTION_LIMIT = 1024;
+
+// Photo caption: headline + up to 1-2 lines, trimmed to a sentence boundary within caption limit
+function buildCaption(title, text) {
+  const cleanTitle = String(title || '').trim();
+  const body = String(text || '').trim();
+  const sentences = body.match(/[^.!?]+[.!?]+/g) || (body ? [body] : []);
+  let caption = cleanTitle;
+  for (const sentence of sentences.slice(0, 2)) {
+    const candidate = `${caption}\n${sentence.trim()}`;
+    if (candidate.length > TELEGRAM_CAPTION_LIMIT) break;
+    caption = candidate;
+  }
+  if (caption.length > TELEGRAM_CAPTION_LIMIT) {
+    const cut = caption.lastIndexOf('. ', TELEGRAM_CAPTION_LIMIT - 1);
+    caption = cut > 0 ? caption.slice(0, cut + 1) : caption.slice(0, TELEGRAM_CAPTION_LIMIT);
+  }
+  return caption;
+}
+
+// Split long text into chunks <= limit, preferring sentence boundaries
+function splitMessage(text, limit) {
+  const chunks = [];
+  let remaining = String(text || '').trim();
+  while (remaining.length > limit) {
+    let cut = -1;
+    for (const end of ['. ', '! ', '? ', '\n']) {
+      const idx = remaining.lastIndexOf(end, limit - 1);
+      if (idx > cut) cut = idx + (end === '\n' ? 0 : 1);
+    }
+    if (cut < limit * 0.5) {
+      const space = remaining.lastIndexOf(' ', limit - 1);
+      cut = space > 0 ? space : limit;
+    }
+    chunks.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks.filter(Boolean);
+}
+
+async function sendFullText(chatId, text) {
+  const parts = splitMessage(text, TELEGRAM_TEXT_LIMIT);
+  for (const part of parts) {
+    await bot.sendMessage(chatId, part);
+  }
+}
+
 // ---------- Posting function ----------
 async function postToChannel() {
+  let newsData = null;
   try {
     console.log("Scheduled post shuru ho raha hai...");
     const candidates = await getTrendingTopics();
 
-    let newsData = null;
     for (const story of candidates) {
       if (await wasAlreadyPosted(story)) {
         console.log(`Duplicate story skip: ${story.title}`);
@@ -238,23 +289,30 @@ async function postToChannel() {
     }
     console.log("News:", newsData.title);
 
-    const messageText = await generateMessage(newsData);
-    console.log("Message:", messageText);
+    // Publisher URL + long article text (agar mil jaye)
+    const publisherUrl = await resolvePublisherUrl(newsData.link);
+    const articleText = publisherUrl ? await fetchArticleText(publisherUrl) : '';
+    const articleUrl = publisherUrl || newsData.link || '';
+
+    const messageText = await generateMessage(newsData, { articleText, articleUrl });
+    console.log(`Message ready (${messageText.length} chars).`);
 
     const usedImages = await getRecentImageUrls();
-    const image = await getImage(newsData, { usedImages });
+    const image = await getImage(newsData, { usedImages, publisherUrl });
     const imageUrl = image && image.url;
     console.log(`Post image: ${imageUrl || 'none'} (source: ${image?.source || 'none'})`);
 
+    const chatId = process.env.TELEGRAM_CHAT_ID;
     if (imageUrl) {
+      const caption = buildCaption(newsData.title, messageText);
       try {
-        await bot.sendPhoto(process.env.TELEGRAM_CHAT_ID, imageUrl, { caption: messageText });
+        await bot.sendPhoto(chatId, imageUrl, { caption });
       } catch (imgErr) {
         logError("Image send failed, sending text only:", imgErr);
-        await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
       }
+      await sendFullText(chatId, messageText);
     } else {
-      await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
+      await sendFullText(chatId, messageText);
     }
 
     await recordPostedNews(newsData, imageUrl);
@@ -262,6 +320,14 @@ async function postToChannel() {
     return true;
   } catch (err) {
     logError("Post Error:", err);
+    try {
+      const fallback = newsData
+        ? `${newsData.title}\n\n${newsData.snippet}\n\nSource: ${newsData.source || ''}\n${newsData.link || ''}`.trim()
+        : "Aaj ki news abhi available nahi hai. Thodi der baad try karo.";
+      await sendFullText(process.env.TELEGRAM_CHAT_ID, fallback);
+    } catch (sendErr) {
+      logError("Fallback post failed:", sendErr);
+    }
     return false;
   }
 }

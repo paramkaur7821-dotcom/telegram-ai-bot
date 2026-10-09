@@ -6,13 +6,16 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
-function withSource(text, source) {
-  const clean = String(text || '').trim();
-  return source ? `${clean}\n\nSource: ${source}` : clean;
-}
-
 const CHANNEL_LANGUAGE = 'English';
-const MAX_COMPLETION_TOKENS = 1500;
+const MAX_LONG_TOKENS = 2500;
+const MAX_SHORT_TOKENS = 1500;
+const MIN_ARTICLE_CHARS = 400;
+
+const TAG_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'at', 'by',
+  'with', 'from', 'as', 'is', 'are', 'was', 'were', 'after', 'before', 'over',
+  'under', 'new', 'news', 'says', 'said', 'will', 'its', 'his', 'her', 'their'
+]);
 
 function trimToLastSentence(text) {
   const clean = String(text || '').trim();
@@ -21,40 +24,85 @@ function trimToLastSentence(text) {
   return clean.slice(0, end + 1).trim();
 }
 
-async function generateMessage(newsData) {
+function buildHashtags(title) {
+  const words = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !TAG_STOPWORDS.has(w));
+  const unique = [...new Set(words)].slice(0, 3);
+  return unique.map((w) => `#${w}`).join(' ');
+}
+
+function buildFooter(source, url, title) {
+  const rows = [];
+  if (source) rows.push(`Source: ${source}`);
+  if (url) rows.push(url);
+  const tags = buildHashtags(title);
+  if (tags) rows.push(tags);
+  return rows.join('\n');
+}
+
+function withFooter(text, source, url, title) {
+  const body = String(text || '').trim();
+  const footer = buildFooter(source, url, title);
+  return footer ? `${body}\n\n${footer}` : body;
+}
+
+async function generateMessage(newsData, options = {}) {
+  const { title, snippet, source } = newsData;
+  const articleUrl = options.articleUrl || newsData.link || '';
+  const articleText = String(options.articleText || '').trim();
+  const hasArticle = articleText.length >= MIN_ARTICLE_CHARS;
+
   try {
-    const { title, snippet, source } = newsData;
+    const messages = hasArticle
+      ? [
+          {
+            role: 'system',
+            content: `You are a professional news writer for a Telegram news channel. Write in ${CHANNEL_LANGUAGE}.
+Write an original, detailed news post of 8 to 12 sentences in your own words.
+Use ONLY facts present in the Article text, Title and Source provided below.
+Never copy sentences from the Article text; rewrite everything in your own words.
+Never invent or guess names, first names, numbers, dates, quotes, statistics or other details not present in the provided text.
+Always end with a complete sentence.
+Reply with only the post body text. Do not add a source line, link or hashtags.`
+          },
+          {
+            role: 'user',
+            content: `Title: ${title}
+Source: ${source}
 
-    const completion = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content: `You write Telegram news posts in ${CHANNEL_LANGUAGE}.
-Use ONLY the facts present in the Title, Details and Source given by the user.
-Never invent or guess names, first names, numbers, dates, quotes, statistics or any other details that are not in the provided text.
+Article text:
+${articleText}
+
+Write the detailed news post now.`
+          }
+        ]
+      : [
+          {
+            role: 'system',
+            content: `You are a news writer for a Telegram news channel. Write in ${CHANNEL_LANGUAGE}.
+Use ONLY the facts present in the Title, Details and Source.
+Never invent or guess names, first names, numbers, dates, quotes or details.
 Never write filler such as "details are limited" or "further information is awaited".
-Write 3 to 5 sentences using only the given facts, and always end with a complete sentence.
-Reply with only the post text, nothing else.`
-        },
-        {
-          role: "user",
-          content: `Write a Telegram news post in ${CHANNEL_LANGUAGE} based on this news:
-
-Title: ${title}
+Write 3 to 5 sentences and always end with a complete sentence.
+Reply with only the post body text. Do not add a source line, link or hashtags.`
+          },
+          {
+            role: 'user',
+            content: `Title: ${title}
 Details: ${snippet}
 Source: ${source}
 
-Requirements:
-- Write 3 to 5 sentences using only the facts in the Title, Details and Source above
-- Never invent names, first names, numbers, quotes or details
-- Never write filler like "details are limited" or "further information is awaited"
-- Always end with a complete sentence
-- End with at most 3 short hashtags
-- Only give the message text, nothing else`
-        }
-      ],
-      max_completion_tokens: MAX_COMPLETION_TOKENS,
+Write the post now.`
+          }
+        ];
+
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages,
+      max_completion_tokens: hasArticle ? MAX_LONG_TOKENS : MAX_SHORT_TOKENS,
       reasoning_effort: 'low'
     });
 
@@ -67,10 +115,10 @@ Requirements:
     if (!text.trim()) {
       throw new Error("Groq ne koi post text nahi diya");
     }
-    return withSource(text, source);
+    return withFooter(text, source, articleUrl, title);
   } catch (err) {
     logError("Groq Error:", err);
-    return withSource(`Latest news: ${newsData.title}\n\n${newsData.snippet}`, newsData.source);
+    return withFooter(`Latest news: ${title}\n\n${snippet}`, source, articleUrl, title);
   }
 }
 
