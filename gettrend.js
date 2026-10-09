@@ -65,10 +65,8 @@ async function fetchFromGoogleNewsRss() {
     posts.push({ title, snippet, source, link, image });
   }
 
-  if (posts.length === 0) return null;
-  const top = posts.slice(0, 5);
-  const pick = top[Math.floor(Math.random() * top.length)];
-  return { title: pick.title, snippet: pick.snippet, source: pick.source, link: pick.link, image: pick.image };
+  if (posts.length === 0) return [];
+  return posts.slice(0, 5);
 }
 
 // Backup: SerpApi (free plan sirf 100 searches/month de sakta hai)
@@ -87,36 +85,41 @@ async function fetchFromSerpApi() {
 
     const articles = res.data.news_results;
     if (articles && articles.length > 0) {
-      const topArticles = articles.slice(0, 5);
-      const pick = topArticles[Math.floor(Math.random() * topArticles.length)];
-      return {
+      return articles.slice(0, 5).map((pick) => ({
         title: pick.title,
         snippet: pick.snippet || pick.title,
         source: pick.source?.name || '',
         link: pick.link || '',
         image: pick.thumbnail || null,
         thumbnail: pick.thumbnail || null
-      };
+      }));
     }
-    return null;
+    return [];
   } catch (err) {
     logError("SerpApi Error:", err);
-    return null;
+    return [];
   }
 }
 
-async function getTrendingTopic() {
-  const rssTopic = await fetchFromGoogleNewsRss().catch((err) => {
+// Ek se zyada candidates do, taaki duplicate story skip karke agli utha sakein
+async function getTrendingTopics() {
+  const rssTopics = await fetchFromGoogleNewsRss().catch((err) => {
     logError("Google News RSS Error:", err);
-    return null;
+    return [];
   });
-  if (rssTopic) return rssTopic;
+  if (rssTopics.length) return rssTopics;
 
-  const serpTopic = await fetchFromSerpApi();
-  if (serpTopic) return serpTopic;
+  const serpTopics = await fetchFromSerpApi();
+  if (serpTopics.length) return serpTopics;
 
   console.error("Koi news source kaam nahi kiya, fallback use ho raha hai.");
-  return FALLBACK_TOPIC;
+  return [FALLBACK_TOPIC];
+}
+
+async function getTrendingTopic() {
+  const topics = await getTrendingTopics();
+  return topics[Math.floor(Math.random() * topics.length)];
 }
 
 module.exports = getTrendingTopic;
+module.exports.getTrendingTopics = getTrendingTopics;

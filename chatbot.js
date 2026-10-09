@@ -6,6 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron');
 
 const getTrendingTopic = require('./gettrend');
+const { getTrendingTopics } = require('./gettrend');
 const generateMessage = require('./generatemassags');
 const getImage = require('./getimags');
 const logError = require('./logerror');
@@ -113,11 +114,106 @@ async function cleanupOldHistory() {
 cron.schedule('0 0 * * *', cleanupOldHistory);
 console.log(`Daily history cleanup scheduled: har din 00:00 par ${HISTORY_DAYS} din se purani rows delete hongi.`);
 
+// ---------- Duplicate news prevention (posted_news) ----------
+const POSTED_NEWS_TABLE = 'posted_news';
+const DEDUP_WINDOW_MS = 48 * 60 * 60 * 1000;
+const TITLE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'at', 'by', 'with',
+  'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'it', 'its',
+  'this', 'that', 'these', 'those', 'after', 'before', 'over', 'under', 'new',
+  'news', 'via', 'says', 'said', 'will', 'has', 'have', 'had', 'into', 'about'
+]);
+
+function normalizeTitle(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !TITLE_STOPWORDS.has(w))
+    .join(' ');
+}
+
+function titleWords(normalized) {
+  return new Set(String(normalized || '').split(/\s+/).filter(Boolean));
+}
+
+// Do titles "very similar" maane jayenge agar unke key words ka Jaccard overlap >= 0.6 ho
+function isSimilarTitle(a, b) {
+  const setA = titleWords(a);
+  const setB = titleWords(b);
+  if (setA.size === 0 || setB.size === 0) return false;
+  let common = 0;
+  for (const w of setA) if (setB.has(w)) common++;
+  const union = setA.size + setB.size - common;
+  return union > 0 && common / union >= 0.6;
+}
+
+async function wasAlreadyPosted(story) {
+  if (!supabase) return false;
+  try {
+    if (story.link) {
+      const { data, error } = await supabase
+        .from(POSTED_NEWS_TABLE)
+        .select('id')
+        .eq('link', story.link)
+        .limit(1);
+      if (error) logError("posted_news link check failed:", error);
+      else if (data && data.length) return true;
+    }
+
+    const since = new Date(Date.now() - DEDUP_WINDOW_MS).toISOString();
+    const { data, error } = await supabase
+      .from(POSTED_NEWS_TABLE)
+      .select('normalized_title')
+      .gte('created_at', since);
+    if (error) {
+      logError("posted_news title check failed:", error);
+      return false;
+    }
+    const normalized = normalizeTitle(story.title);
+    return (data || []).some((row) => isSimilarTitle(normalized, row.normalized_title));
+  } catch (err) {
+    logError("posted_news dedup check failed:", err);
+    return false;
+  }
+}
+
+async function recordPostedNews(story) {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase
+      .from(POSTED_NEWS_TABLE)
+      .insert([{
+        title: story.title,
+        link: story.link || null,
+        normalized_title: normalizeTitle(story.title)
+      }]);
+    if (error) logError("posted_news insert failed:", error);
+  } catch (err) {
+    logError("posted_news insert failed:", err);
+  }
+}
+
 // ---------- Posting function ----------
 async function postToChannel() {
   try {
     console.log("Scheduled post shuru ho raha hai...");
-    const newsData = await getTrendingTopic();
+    const candidates = await getTrendingTopics();
+
+    let newsData = null;
+    for (const story of candidates) {
+      if (await wasAlreadyPosted(story)) {
+        console.log(`Duplicate story skip: ${story.title}`);
+        continue;
+      }
+      newsData = story;
+      break;
+    }
+
+    if (!newsData) {
+      console.log("Koi nayi story nahi mili, saari candidates recent posts se match kar gayi.");
+      return false;
+    }
     console.log("News:", newsData.title);
 
     const messageText = await generateMessage(newsData);
@@ -135,7 +231,9 @@ async function postToChannel() {
     } else {
       await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
     }
-    console.log("Channel post successful!");
+
+    await recordPostedNews(newsData);
+    console.log(`Channel post successful at ${new Date().toLocaleString()}: ${newsData.title}`);
     return true;
   } catch (err) {
     logError("Post Error:", err);
@@ -177,15 +275,19 @@ async function saveSettings(mode, intervalMinutes) {
 }
 
 function startSchedule(intervalMinutes) {
+  // Sirf ek scheduler chalna chahiye: purana task hamesha pehle band karo.
   if (currentTask) {
     currentTask.stop();
+    currentTask = null;
+    console.log("Purana schedule band kiya, naya set kar rahe hain.");
   }
-  const cronExpr = `*/${intervalMinutes} * * * *`;
+  const minutes = Math.max(1, Math.min(1440, parseInt(intervalMinutes, 10) || 20));
+  const cronExpr = `*/${minutes} * * * *`;
   currentTask = cron.schedule(cronExpr, () => {
-    console.log(`${intervalMinutes} minute ho gaye, post kar rahe hain!`);
+    console.log(`${minutes} minute ho gaye, post kar rahe hain!`);
     postToChannel();
   });
-  console.log(`Scheduling set ho gayi: har ${intervalMinutes} minute mein post hoga.`);
+  console.log(`Scheduling set ho gayi: har ${minutes} minute mein post hoga.`);
 }
 
 function stopSchedule() {

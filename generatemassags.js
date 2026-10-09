@@ -33,8 +33,8 @@ async function generateMessage(newsData) {
           content: `You write Telegram news posts in ${CHANNEL_LANGUAGE}.
 Use ONLY the facts present in the Title, Details and Source given by the user.
 Never invent or guess names, first names, numbers, dates, quotes, statistics or any other details that are not in the provided text.
-If the information is limited, write a short post of 3 to 5 sentences and say in the post that details are limited or more information is awaited.
-Every post must always end with a complete sentence.
+Never write filler such as "details are limited" or "further information is awaited".
+Write 3 to 5 sentences using only the given facts, and always end with a complete sentence.
 Reply with only the post text, nothing else.`
         },
         {
@@ -46,11 +46,11 @@ Details: ${snippet}
 Source: ${source}
 
 Requirements:
-- Use 4-6 sentences covering the full context, unless the details are limited (then use 3-5 sentences and say so)
-- Use only facts present in the Title, Details and Source above
+- Write 3 to 5 sentences using only the facts in the Title, Details and Source above
 - Never invent names, first names, numbers, quotes or details
+- Never write filler like "details are limited" or "further information is awaited"
 - Always end with a complete sentence
-- End with 2-3 relevant hashtags
+- End with at most 3 short hashtags
 - Only give the message text, nothing else`
         }
       ],
