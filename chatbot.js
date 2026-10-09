@@ -35,6 +35,7 @@ if (!supabase) {
 }
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+const SCHEDULE_TIMEZONE = 'Asia/Kolkata';
 
 const HISTORY_DAYS = 365;
 const HISTORY_LIMIT = 20;
@@ -285,7 +286,7 @@ async function postToChannel() {
 
     if (!newsData) {
       console.log("Koi nayi story nahi mili, saari candidates recent posts se match kar gayi.");
-      return false;
+      return { ok: false, error: "Koi nayi story nahi mili (sab recent posts se match kar gayi)." };
     }
     console.log("News:", newsData.title);
 
@@ -317,7 +318,7 @@ async function postToChannel() {
 
     await recordPostedNews(newsData, imageUrl);
     console.log(`Channel post successful at ${new Date().toLocaleString()}: ${newsData.title}`);
-    return true;
+    return { ok: true };
   } catch (err) {
     logError("Post Error:", err);
     try {
@@ -328,7 +329,7 @@ async function postToChannel() {
     } catch (sendErr) {
       logError("Fallback post failed:", sendErr);
     }
-    return false;
+    return { ok: false, error: String(err && err.message ? err.message : err).slice(0, 200) };
   }
 }
 
@@ -372,13 +373,28 @@ function startSchedule(intervalMinutes) {
     currentTask = null;
     console.log("Purana schedule band kiya, naya set kar rahe hain.");
   }
+
   const minutes = Math.max(1, Math.min(1440, parseInt(intervalMinutes, 10) || 20));
-  const cronExpr = `*/${minutes} * * * *`;
-  currentTask = cron.schedule(cronExpr, () => {
+  const runPost = () => {
     console.log(`${minutes} minute ho gaye, post kar rahe hain!`);
     postToChannel();
-  });
-  console.log(`Scheduling set ho gayi: har ${minutes} minute mein post hoga.`);
+  };
+
+  if (minutes < 60) {
+    currentTask = cron.schedule(`*/${minutes} * * * *`, runPost, { timezone: SCHEDULE_TIMEZONE });
+    const next = currentTask.getNextRun && currentTask.getNextRun();
+    console.log(`Scheduling set: har ${minutes} minute (cron "*/${minutes} * * * *"), timezone ${SCHEDULE_TIMEZONE}, next run: ${next ? next.toLocaleString() : 'unknown'}`);
+  } else if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    currentTask = cron.schedule(`0 */${hours} * * *`, runPost, { timezone: SCHEDULE_TIMEZONE });
+    const next = currentTask.getNextRun && currentTask.getNextRun();
+    console.log(`Scheduling set: har ${hours} ghante (cron "0 */${hours} * * *"), timezone ${SCHEDULE_TIMEZONE}, next run: ${next ? next.toLocaleString() : 'unknown'}`);
+  } else {
+    const ms = minutes * 60 * 1000;
+    const timer = setInterval(runPost, ms);
+    currentTask = { stop: () => clearInterval(timer) };
+    console.log(`Scheduling set: har ${minutes} minute (setInterval), next run: ${new Date(Date.now() + ms).toLocaleString()}`);
+  }
 }
 
 function stopSchedule() {
@@ -434,22 +450,23 @@ bot.on('message', async (msg) => {
           console.log(`One-time post at ${hour}:${minute} ho raha hai!`);
           postToChannel();
           oneTimeTask.destroy();
-        });
+        }, { timezone: SCHEDULE_TIMEZONE });
         console.log(`One-time scheduled: ${hour}:${minute}`);
         await bot.sendMessage(chatId, `Theek hai! ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} par channel mein post ho jayegi.`);
         return;
       }
     }
 
-    // Command: abhi post karo (e.g. "post karo", "/post", "abi post")
+    // Command: abhi post karo (e.g. "post karo", "news post dalo", "channel par post karo")
     const postRequest =
       lowerText.includes('/post') ||
-      /(post (karo|kar do|kar de|now|abhi|de do)|abi post|abhi post|post chahiye|channel (par|pa) post|post send)/.test(lowerText);
+      lowerText.includes('news post') ||
+      /(post (karo|kar do|kar de|kardo|dalo|daalo|de do|bhejo|bhej do|now|abhi)|abi post|abhi post|post chahiye|channel (par|pa) post|post send|post kar)/.test(lowerText);
     if (postRequest) {
-      const ok = await postToChannel();
-      await bot.sendMessage(chatId, ok
+      const result = await postToChannel();
+      await bot.sendMessage(chatId, result.ok
         ? "Theek hai! News abhi channel par post kar di gayi. ✅"
-        : "Post nahi ho saka. Logs dekho (shayad API keys ya quota ka issue hai).");
+        : `Post nahi ho saka: ${result.error || 'unknown error'}`);
       return;
     }
 
