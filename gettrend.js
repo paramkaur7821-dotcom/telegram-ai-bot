@@ -6,6 +6,7 @@ const FALLBACK_TOPIC = {
   title: "Punjab latest news",
   snippet: "Latest updates from Punjab",
   source: '',
+  sourceUrl: '',
   link: '',
   image: null,
   imageWidth: null,
@@ -63,7 +64,11 @@ async function fetchFromGoogleNewsRss() {
   const posts = [];
   for (const m of items) {
     const content = m[1];
-    const source = decodeXml((content.match(/<source[^>]*>(.*?)<\/source>/) || [, ''])[1]).trim();
+    const sourceTag = content.match(/<source[^>]*\burl=["']([^"']+)["'][^>]*>(.*?)<\/source>/i);
+    const sourceUrl = sourceTag ? decodeXml(sourceTag[1]).trim() : '';
+    const source = sourceTag
+      ? decodeXml(sourceTag[2]).trim()
+      : decodeXml((content.match(/<source[^>]*>(.*?)<\/source>/) || [, ''])[1]).trim();
     const title = cleanTitle(decodeXml((content.match(/<title>(.*?)<\/title>/) || [, ''])[1]), source);
     if (!title) continue;
     const descHtml = decodeXml((content.match(/<description>(.*?)<\/description>/) || [, ''])[1]);
@@ -74,6 +79,7 @@ async function fetchFromGoogleNewsRss() {
       title,
       snippet,
       source,
+      sourceUrl,
       link,
       image: image ? image.url : null,
       imageWidth: image ? image.width : null,
@@ -105,6 +111,7 @@ async function fetchFromSerpApi() {
         title: pick.title,
         snippet: pick.snippet || pick.title,
         source: pick.source?.name || '',
+        sourceUrl: pick.source?.link || '',
         link: pick.link || '',
         image: pick.thumbnail || null,
         thumbnail: pick.thumbnail || null

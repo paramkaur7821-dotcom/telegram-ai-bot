@@ -1,24 +1,23 @@
 require('dotenv').config();
 const axios = require('axios');
-const Groq = require('groq-sdk');
 const logError = require('./logerror');
 
-const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
-
-const MIN_IMAGE_SIZE = 200;
-
-const KEYWORD_NOISE = new Set([
-  'the', 'a', 'an', 'here', 'are', 'is', 'was', 'were', 'for', 'of', 'to', 'in',
-  'on', 'at', 'and', 'or', 'with', 'this', 'that', 'these', 'photo', 'image',
-  'images', 'picture', 'pictures', 'showing', 'shows', 'related', 'news',
-  'headline', 'keywords', 'keyword', 'about', 'from', 'latest', 'breaking'
-]);
+const MIN_IMAGE_WIDTH = 300;
+const MIN_IMAGE_HEIGHT = 200;
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
+
+const STOCK_HOSTS = [
+  'pixabay.com', 'pexels.com', 'unsplash.com', 'shutterstock.com', 'gettyimages.com',
+  'istockphoto.com', 'adobe.com', 'stock.adobe.com', 'dreamstime.com', 'freepik.com',
+  'alamy.com', 'depositphotos.com', '123rf.com', 'canstockphoto.com', 'bigstockphoto.com',
+  'vectorstock.com', 'pond5.com', 'stocksy.com', 'envato.com', 'creativecommons.org'
+];
+
+const SOURCE_STOPWORDS = new Set(['the', 'and', 'of', 'for', 'a', 'an', 'news', 'media', 'daily']);
 
 function decodeUrl(url) {
   return String(url).replace(/&amp;/g, '&').replace(/&#38;/g, '&').replace(/&quot;/g, '"');
@@ -26,6 +25,20 @@ function decodeUrl(url) {
 
 function hostnameOf(url) {
   try { return new URL(url).hostname.toLowerCase(); } catch (e) { return ''; }
+}
+
+// Registrable domain (e.g. images.ndtv.com -> ndtv.com, news.bbc.co.uk -> bbc.co.uk)
+function registrableDomain(host) {
+  const clean = String(host || '').toLowerCase().replace(/^www\./, '');
+  if (!clean) return '';
+  const parts = clean.split('.');
+  if (parts.length <= 2) return clean;
+  const secondLast = parts[parts.length - 2];
+  const tld = parts[parts.length - 1];
+  if (tld.length === 2 && ['co', 'com', 'org', 'net', 'gov', 'ac', 'edu'].includes(secondLast)) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
 }
 
 function isGoogleNewsLink(url) {
@@ -39,11 +52,17 @@ function isGoogleHost(url) {
     host === 'gstatic.com' || host.endsWith('.gstatic.com');
 }
 
-// Reject Google-owned images, obvious logos/placeholders, non-http URLs
+function isStockHost(url) {
+  const host = hostnameOf(url);
+  return STOCK_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
+}
+
+// Reject Google-owned/stock images, obvious logos/placeholders, non-http URLs
 function isBadImageUrl(url) {
   const value = String(url || '').toLowerCase();
   if (!/^https?:\/\//i.test(value)) return true;
-  if (/news\.google\.com|gstatic\.com|googleusercontent\.com|google\.com/.test(value)) return true;
+  if (isGoogleHost(value)) return true;
+  if (isStockHost(value)) return true;
   if (/logo|favicon|placeholder|default/.test(value)) return true;
   return false;
 }
@@ -51,8 +70,8 @@ function isBadImageUrl(url) {
 function isTooSmall(width, height) {
   const w = parseInt(width, 10);
   const h = parseInt(height, 10);
-  if (Number.isFinite(w) && w < MIN_IMAGE_SIZE) return true;
-  if (Number.isFinite(h) && h < MIN_IMAGE_SIZE) return true;
+  if (Number.isFinite(w) && w < MIN_IMAGE_WIDTH) return true;
+  if (Number.isFinite(h) && h < MIN_IMAGE_HEIGHT) return true;
   return false;
 }
 
@@ -64,6 +83,25 @@ function imageKey(url) {
   } catch (e) {
     return String(url || '').split('?')[0].toLowerCase();
   }
+}
+
+// og:image, publisher page ke same publisher domain se honi chahiye
+function samePublisherDomain(imageUrl, publisherUrl) {
+  const imgDomain = registrableDomain(hostnameOf(imageUrl));
+  const pubDomain = registrableDomain(hostnameOf(publisherUrl));
+  return Boolean(imgDomain) && imgDomain === pubDomain;
+}
+
+// Source name domain se match kare (e.g. NDTV -> ndtv.com)
+function sourceMatchesDomain(source, host) {
+  const words = String(source || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !SOURCE_STOPWORDS.has(w));
+  if (words.length === 0) return true;
+  const compact = String(host || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return words.some((w) => compact.includes(w));
 }
 
 // Google News encoded links ka legacy base64 payload se publisher URL nikalo
@@ -113,7 +151,7 @@ async function resolvePublisherUrl(link) {
   return '';
 }
 
-// Step 2: publisher page ke HTML se og:image meta tag (+ width/height)
+// Publisher page ke HTML se og:image meta tag (+ width/height)
 async function fetchOgImage(url) {
   try {
     const res = await axios.get(url, {
@@ -148,106 +186,7 @@ async function fetchOgImage(url) {
   }
 }
 
-async function searchPixabay(keywords, usedKeys) {
-  if (!process.env.PIXABAY_KEY) {
-    console.error("PIXABAY_KEY set nahi hai, Pixabay step skip.");
-    return null;
-  }
-
-  const queries = [...keywords];
-  for (let i = queries.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [queries[i], queries[j]] = [queries[j], queries[i]];
-  }
-
-  for (const query of queries) {
-    try {
-      const res = await axios.get('https://pixabay.com/api/', {
-        params: {
-          key: process.env.PIXABAY_KEY,
-          q: query,
-          image_type: 'photo',
-          safesearch: true,
-          per_page: 20,
-          order: 'latest'
-        },
-        timeout: 8000
-      });
-
-      const hits = res.data.hits || [];
-      const candidates = hits.filter((hit) =>
-        hit.largeImageURL &&
-        !isBadImageUrl(hit.largeImageURL) &&
-        !isTooSmall(hit.imageWidth, hit.imageHeight) &&
-        !usedKeys.has(imageKey(hit.largeImageURL))
-      );
-
-      if (candidates.length > 0) {
-        console.log(`Pixabay ("${query}") se ${candidates.length} nayi image mili.`);
-        return candidates[Math.floor(Math.random() * candidates.length)].largeImageURL;
-      }
-      console.log(`Pixabay ("${query}") mein koi nayi image nahi mili.`);
-    } catch (err) {
-      logError(`Pixabay Error for "${query}":`, err);
-    }
-  }
-  return null;
-}
-
-function extractKeywords(text) {
-  const stopWords = ['the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'with'];
-  const words = text
-    .replace(/[^\w\s]/g, '')
-    .split(' ')
-    .filter(w => w.length > 3 && !stopWords.includes(w.toLowerCase()));
-  return words.slice(0, 4).join(' ') || 'Punjab news';
-}
-
-// Step 3: AI headline se 5 alag-alag short English keywords banata hai (Pixabay ke liye)
-async function generateImageKeywords(headline) {
-  const fallback = extractKeywords(headline);
-
-  if (!groq) {
-    console.error("GROQ_API_KEY set nahi hai, AI keyword ki jagah fallback keyword use hoga.");
-    return [fallback];
-  }
-
-  try {
-    const completion = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: 'You suggest English stock-photo search keywords.'
-        },
-        {
-          role: 'user',
-          content: `Give 5 DIFFERENT 2 to 3 word English stock-photo search keyword phrases for this news headline. Reply with ONLY the phrases, one per line, no numbering, no punctuation, no explanation.\nHeadline: ${headline}`
-        }
-      ],
-      max_completion_tokens: 150,
-      reasoning_effort: 'low'
-    });
-
-    const lines = (completion.choices[0]?.message?.content || '')
-      .split(/\r?\n/)
-      .map(l => l.replace(/[^A-Za-z0-9\s-]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase())
-      .filter(l => l.length > 2);
-
-    const cleaned = lines
-      .filter(l => l.split(' ').some(w => w && !KEYWORD_NOISE.has(w)))
-      .slice(0, 5);
-
-    if (cleaned.length > 0) return cleaned;
-
-    console.log("AI keywords useful nahi the, fallback use kar rahe hain.");
-    return [fallback];
-  } catch (err) {
-    logError("AI keyword generation failed:", err);
-    return [fallback];
-  }
-}
-
+// Sirf article ki apni image: pehle RSS media/enclosure, phir og:image (same publisher domain)
 async function getImage(newsData, options = {}) {
   const usedKeys = new Set();
   if (options.usedImages) {
@@ -256,42 +195,39 @@ async function getImage(newsData, options = {}) {
   const acceptable = (url, width, height) =>
     url && !isBadImageUrl(url) && !isTooSmall(width, height) && !usedKeys.has(imageKey(url));
 
-  // Step 1: Article ki apni image (RSS media:content/media:thumbnail/enclosure ya news API thumbnail)
+  // Step 1: Article ki apni RSS media / enclosure image
   const ownImage = newsData.image || newsData.thumbnail;
   if (acceptable(ownImage, newsData.imageWidth, newsData.imageHeight)) {
-    console.log("RSS media image use ho rahi hai.");
-    return { url: ownImage, source: 'RSS media' };
+    console.log("Image source: RSS media");
+    return { url: ownImage, source: 'rss' };
   }
   if (ownImage) {
-    console.log("RSS media image reject hui (bad/duplicate/small), agli source try kar rahe hain.");
+    console.log("RSS media image reject hui (bad/stock/duplicate/small).");
   }
 
-  // Step 2: Publisher URL resolve karke og:image
+  // Step 2: Publisher URL resolve karke og:image, same publisher domain se
   const publisherUrl = await resolvePublisherUrl(newsData.link);
   if (publisherUrl) {
     const ogImage = await fetchOgImage(publisherUrl);
-    if (ogImage && acceptable(ogImage.url, ogImage.width, ogImage.height)) {
-      console.log("og:image use ho rahi hai.");
-      return { url: ogImage.url, source: 'og:image' };
-    }
     if (ogImage) {
-      console.log("og:image reject hui (bad/duplicate/small), Pixabay try kar rahe hain.");
+      const publisherHost = hostnameOf(publisherUrl);
+      if (!samePublisherDomain(ogImage.url, publisherUrl)) {
+        console.log(`og:image reject hui: publisher domain se match nahi (${ogImage.url}).`);
+      } else if (!sourceMatchesDomain(newsData.source, publisherHost)) {
+        console.log(`og:image reject hui: source "${newsData.source || ''}" domain se match nahi.`);
+      } else if (acceptable(ogImage.url, ogImage.width, ogImage.height)) {
+        console.log("Image source: og:image");
+        return { url: ogImage.url, source: 'og:image' };
+      } else {
+        console.log("og:image reject hui (bad/stock/duplicate/small).");
+      }
     }
   } else if (!newsData.link) {
-    console.log("Article URL nahi mila, og:image step skip kar rahe hain.");
+    console.log("Article URL nahi mila, og:image step skip.");
   }
 
-  // Step 3: AI-generated keywords se Pixabay search
-  const keywords = await generateImageKeywords(newsData.title || 'Punjab news');
-  console.log(`Pixabay par search kar rahe hain: "${keywords.join('" | "')}"`);
-  const pixabayUrl = await searchPixabay(keywords, usedKeys);
-  if (pixabayUrl) {
-    console.log("Pixabay se image mil gayi!");
-    return { url: pixabayUrl, source: 'Pixabay' };
-  }
-
-  console.log("Koi image nahi mili, text-only post hoga.");
-  return { url: null, source: null };
+  console.log("Koi valid article image nahi mili, text-only post hoga.");
+  return { url: null, source: 'none' };
 }
 
 module.exports = getImage;
