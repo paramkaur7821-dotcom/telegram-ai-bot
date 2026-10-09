@@ -15,7 +15,9 @@ async function run() {
     const messageText = await generateMessage(topic);
     console.log("Message:", messageText);
 
-    const imageUrl = await getImage(topic);
+    const image = await getImage(topic);
+    const imageUrl = image && image.url;
+    console.log(`Post image: ${imageUrl || 'none'} (source: ${image?.source || 'none'})`);
 
     if (imageUrl) {
       try {

@@ -8,6 +8,8 @@ const FALLBACK_TOPIC = {
   source: '',
   link: '',
   image: null,
+  imageWidth: null,
+  imageHeight: null,
   thumbnail: null
 };
 
@@ -36,9 +38,15 @@ function cleanTitle(title, source) {
 function findArticleImage(itemXml) {
   const tags = ['media:content', 'media:thumbnail', 'enclosure'];
   for (const tag of tags) {
-    const re = new RegExp(`<${tag}\\b[^>]*\\burl=["']([^"']+)["']`, 'i');
+    const re = new RegExp(`<${tag}\\b([^>]*)>`, 'i');
     const match = itemXml.match(re);
-    if (match && /^https?:\/\//i.test(match[1])) return decodeXml(match[1]);
+    if (!match) continue;
+    const attrs = match[1];
+    const urlMatch = attrs.match(/\burl=["']([^"']+)["']/i);
+    if (!urlMatch || !/^https?:\/\//i.test(urlMatch[1])) continue;
+    const width = parseInt((attrs.match(/\bwidth=["']?(\d+)/i) || [])[1], 10) || null;
+    const height = parseInt((attrs.match(/\bheight=["']?(\d+)/i) || [])[1], 10) || null;
+    return { url: decodeXml(urlMatch[1]), width, height };
   }
   return null;
 }
@@ -62,7 +70,15 @@ async function fetchFromGoogleNewsRss() {
     const snippet = descHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 250) || title;
     const link = decodeXml((content.match(/<link>(.*?)<\/link>/) || [, ''])[1]).trim();
     const image = findArticleImage(content);
-    posts.push({ title, snippet, source, link, image });
+    posts.push({
+      title,
+      snippet,
+      source,
+      link,
+      image: image ? image.url : null,
+      imageWidth: image ? image.width : null,
+      imageHeight: image ? image.height : null
+    });
   }
 
   if (posts.length === 0) return [];

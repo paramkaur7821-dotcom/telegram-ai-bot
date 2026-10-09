@@ -35,7 +35,7 @@ if (!supabase) {
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
-const HISTORY_DAYS = 30;
+const HISTORY_DAYS = 365;
 const HISTORY_LIMIT = 20;
 const HISTORY_RETENTION_MS = HISTORY_DAYS * 24 * 60 * 60 * 1000;
 let currentTask = null;
@@ -117,6 +117,7 @@ console.log(`Daily history cleanup scheduled: har din 00:00 par ${HISTORY_DAYS} 
 // ---------- Duplicate news prevention (posted_news) ----------
 const POSTED_NEWS_TABLE = 'posted_news';
 const DEDUP_WINDOW_MS = 48 * 60 * 60 * 1000;
+const IMAGE_DEDUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const TITLE_STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'at', 'by', 'with',
   'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'it', 'its',
@@ -178,7 +179,27 @@ async function wasAlreadyPosted(story) {
   }
 }
 
-async function recordPostedNews(story) {
+async function getRecentImageUrls() {
+  if (!supabase) return new Set();
+  try {
+    const since = new Date(Date.now() - IMAGE_DEDUP_WINDOW_MS).toISOString();
+    const { data, error } = await supabase
+      .from(POSTED_NEWS_TABLE)
+      .select('image_url')
+      .gte('created_at', since)
+      .not('image_url', 'is', null);
+    if (error) {
+      logError("posted_news image check failed:", error);
+      return new Set();
+    }
+    return new Set((data || []).map((row) => row.image_url).filter(Boolean));
+  } catch (err) {
+    logError("posted_news image check failed:", err);
+    return new Set();
+  }
+}
+
+async function recordPostedNews(story, imageUrl) {
   if (!supabase) return;
   try {
     const { error } = await supabase
@@ -186,7 +207,8 @@ async function recordPostedNews(story) {
       .insert([{
         title: story.title,
         link: story.link || null,
-        normalized_title: normalizeTitle(story.title)
+        normalized_title: normalizeTitle(story.title),
+        image_url: imageUrl || null
       }]);
     if (error) logError("posted_news insert failed:", error);
   } catch (err) {
@@ -219,7 +241,10 @@ async function postToChannel() {
     const messageText = await generateMessage(newsData);
     console.log("Message:", messageText);
 
-    const imageUrl = await getImage(newsData);
+    const usedImages = await getRecentImageUrls();
+    const image = await getImage(newsData, { usedImages });
+    const imageUrl = image && image.url;
+    console.log(`Post image: ${imageUrl || 'none'} (source: ${image?.source || 'none'})`);
 
     if (imageUrl) {
       try {
@@ -232,7 +257,7 @@ async function postToChannel() {
       await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, messageText);
     }
 
-    await recordPostedNews(newsData);
+    await recordPostedNews(newsData, imageUrl);
     console.log(`Channel post successful at ${new Date().toLocaleString()}: ${newsData.title}`);
     return true;
   } catch (err) {
